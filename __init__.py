@@ -424,7 +424,7 @@ class c2bProperties(bpy.types.PropertyGroup):
     caDNAno_filepath: bpy.props.StringProperty(subtype="FILE_PATH")
     caDNAno_latticetype: bpy.props.EnumProperty(
         items=[('sq', 'Square', 'Square lattice design', 0),
-               ('hc', 'Honeyc.', 'Honeycomb lattice design', 1)],
+               ('hc', 'Honeycomb', 'Honeycomb lattice design', 1)],
         name='Lattice type',
         default='sq')
 
@@ -446,6 +446,8 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
         row.label(text=scn.c2b_properties.caDNAno_filepath)
         row = self.layout.row()
         row.operator("c2b.file_printer", text="Print caDNAno")
+        self.layout.prop(scn.c2b_properties, "caDNAno_latticetype")
+
 
 
 class C2B_OT_FilePrinter(bpy.types.Operator):
@@ -578,7 +580,7 @@ def unregister():
     if dependencies_installed:
         for c in reversed(__classes__):
             bpy.utils.unregister_class(c)
-        del bpy.types.Object.c2b_properties
+        del bpy.types.Scene.c2b_properties
 
 if __name__ == "__main__":
     register()
