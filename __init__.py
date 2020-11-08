@@ -16,6 +16,9 @@ from collections import namedtuple
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper
 
+
+# Importing of dependencies are Copyright (C) 2020  Robert Guetzkow
+# github.com/robertguetzkow/blender-python-examples
 Dependency = namedtuple("Dependency", ["module", "package", "name"])
 # Declare all modules that this add-on depends on. The package and (global) name can be set to None,
 # if they are equal to the module name. See import_module and ensure_and_import_module for the
@@ -100,7 +103,16 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
 
 
 class caDNAnoFileHandler():
+    '''
+    DESCRIPTION
+    ===========
+    Class that provides the reading and writing to caDNAno files.
 
+    Update 180821:
+        No longer relies on the indecies but uses the strand numbers
+        in the cadnano files for all.
+
+    '''
     def __init__(self):
         self.jsonDecoder = simplejson.JSONDecoder()
         self.jsonEncoder = simplejson.JSONEncoder()
@@ -409,7 +421,14 @@ class caDNAnoFileHandler():
         return (stapSeq)
 
 class c2bProperties(bpy.types.PropertyGroup):
-    caDNAno_filepath = bpy.props.StringProperty(subtype="FILE_PATH")
+    caDNAno_filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    caDNAno_latticetype: bpy.props.EnumProperty(
+        items=[('sq', 'Square', 'Square lattice design', 0),
+               ('hc', 'Honeyc.', 'Honeycomb lattice design', 1)],
+        name='Lattice type',
+        default='sq')
+
+
 
 class C2B_PT_c2bMainPanel(bpy.types.Panel):
     bl_label = "caDNAno2Blend"
