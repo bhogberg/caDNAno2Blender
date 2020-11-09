@@ -10,23 +10,26 @@ bl_info = {
 
 import bpy
 import os
+import math
+import time
 import subprocess
 import importlib
 from collections import namedtuple
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper
 
-
+#----------------------------------------------------------------------------------------------------
+#             FIRST MAKE SURE ALL MODULES WE NEED ARE INSTALLED
+#----------------------------------------------------------------------------------------------------
 # Importing of dependencies are Copyright (C) 2020  Robert Guetzkow
 # github.com/robertguetzkow/blender-python-examples
+#----------------------------------------------------------------------------------------------------
 Dependency = namedtuple("Dependency", ["module", "package", "name"])
 # Declare all modules that this add-on depends on. The package and (global) name can be set to None,
 # if they are equal to the module name. See import_module and ensure_and_import_module for the
 # explanation of the arguments.
 dependencies = (Dependency(module="simplejson", package=None, name=None),)
-
 dependencies_installed = False
-
 def import_module(module_name, global_name=None):
     """
     Import a module.
@@ -101,7 +104,86 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
     # The installation succeeded, attempt to import the module again
     import_module(module_name, global_name)
 
+class EXAMPLE_PT_warning_panel(bpy.types.Panel):
+    bl_label = "caDNAno2Blender Warning"
+    bl_category = "caDNAno2Blend"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
 
+    @classmethod
+    def poll(self, context):
+        return not dependencies_installed
+
+    def draw(self, context):
+        layout = self.layout
+
+        lines = [f"For the addon to run you need to first install the missing python",
+                 f"dependencies for \"{bl_info.get('name')}\".",
+                 f"1. Open the preferences (Edit > Preferences > Add-ons).",
+                 f"2. Search for the \"{bl_info.get('name')}\" add-on.",
+                 f"3. Open the details section of the add-on.",
+                 f"4. Click on the \"{EXAMPLE_OT_install_dependencies.bl_label}\" button.",
+                 f"   This will download and install the missing Python packages, if Blender has the required",
+                 f"   permissions. (On Windows for example, Blender needs to run in administrator",
+                 f"   mode during this installation.)",
+                 f"5. You might need to deactivate and re-activate the addon"
+                 f"If you're attempting to run the add-on from the text editor, you won't see the options described",
+                 f"above. Please install the add-on properly through the preferences.",
+                 f"1. Open the add-on preferences (Edit > Preferences > Add-ons).",
+                 f"2. Press the \"Install\" button.",
+                 f"3. Search for the add-on file.",
+                 f"4. Confirm the selection by pressing the \"Install Add-on\" button in the file browser."]
+
+        for line in lines:
+            layout.label(text=line)
+
+class EXAMPLE_OT_install_dependencies(bpy.types.Operator):
+    bl_idname = "example.install_dependencies"
+    bl_label = "Install dependencies"
+    bl_description = ("Downloads and installs the required python packages for this add-on. "
+                      "Internet connection is required. Blender may have to be started with "
+                      "elevated permissions in order to install the package")
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    @classmethod
+    def poll(self, context):
+        # Deactivate when dependencies have been installed
+        return not dependencies_installed
+
+    def execute(self, context):
+        try:
+            install_pip()
+            for dependency in dependencies:
+                install_and_import_module(module_name=dependency.module,
+                                          package_name=dependency.package,
+                                          global_name=dependency.name)
+        except (subprocess.CalledProcessError, ImportError) as err:
+            self.report({"ERROR"}, str(err))
+            return {"CANCELLED"}
+
+        global dependencies_installed
+        dependencies_installed = True
+
+        # Register the panels, operators, etc. since dependencies are installed
+        for cls in __classes__:
+            bpy.utils.register_class(cls)
+
+        return {"FINISHED"}
+
+class EXAMPLE_preferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(EXAMPLE_OT_install_dependencies.bl_idname, icon="CONSOLE")
+
+#----------------------------------------------------------------------------------------------------
+#             THE caDNAno and DNA SPECIFIC CODE
+#----------------------------------------------------------------------------------------------------
+# Using average helix-helix distances of 2.6 nm (in both square and honeycomb lattices)
+# Yoo J, Aksimentiev A. P Natl Acad Sci USA. 2013; 110:20099–20104
+# Fischer S, et al. Nano Lett. 2016; 16(7): 4282-4287
+# And a DNA diameter of 2.1 nm
 class caDNAnoFileHandler():
     '''
     DESCRIPTION
@@ -128,7 +210,7 @@ class caDNAnoFileHandler():
         # read in the file
         if not os.path.isfile(file_n):
             print("In method read_caDNAno_file: error reading the file '" + file_n + "'")
-            return
+            return False
         self.fileName = file_n
         file = open(self.fileName, 'r')
         lines = file.readlines()
@@ -141,7 +223,11 @@ class caDNAnoFileHandler():
         self.data = self.jsonDecoder.decode(str)
 
         # Initiate sequence on virtual strands to '?'s at all bases
-        totalBases = len(self.data["vstrands"][0]["skip"])
+        try:
+            totalBases = len(self.data["vstrands"][0]["skip"])
+        except:
+            #Something is wrong with the caDNAno file
+            return False
         strands = self.data["vstrands"]
         self.vstrandsSequence = {}
         for strand in strands:
@@ -153,6 +239,7 @@ class caDNAnoFileHandler():
         for strand in strands:
             self.strandi.update({strand["num"]: i})
             i += 1
+        return True
 
     def write_caDNAno_file(self, new_filename):
         # encodes into JSON and writes the file
@@ -420,7 +507,144 @@ class caDNAnoFileHandler():
                     stapSeq.append('X')
         return (stapSeq)
 
+    def getScaffoldLengths(self):
+        #
+        # Returns a list of startbases and endbases for each virtual strand
+        # each element should look like:
+        # [ row, column, [startbase1, endbase1], [startbase2, endbase2], ... ]
+        #
+        # used for building cylinder models
+        #
+        strands = self.data["vstrands"]
+        dataset = []
+        for strand in strands:
+            subDataset = []
+            row = int(strand["row"])
+            col = int(strand["col"])
+            subDataset.append(row)
+            subDataset.append(col)
+            scaf = strand["scaf"]
+            prevBaseWasOccupied = False
+            end = -1
+            start = -1
+            for i in range(len(scaf)):
+                base = scaf[i]
+                if base == [-1, -1, -1, -1]:
+                    # the base is empty
+                    if prevBaseWasOccupied:
+                        # prevBase was an end
+                        end = i - 1
+                    prevBaseWasOccupied = False
+                else:
+                    # base is occupied
+                    if not prevBaseWasOccupied:
+                        # the base is a start
+                        start = i
+                    prevBaseWasOccupied = True
+                if end > -1 and start > -1:
+                    subDataset.append([start, end])
+                    end = -1
+                    start = -1
+            dataset.append(subDataset)
+        return dataset
+
+
+class DnaGeometry():
+    def __init__(self):
+        self.data = []
+        self.SQ_inter_helix_dist = 2.6
+        self.HC_inter_helix_dist = 2.6
+        self.dna_diameter = 2.1
+        self.base_step = 0.34 #nm in dsDNA
+
+    def getData(self):
+        return self.data
+
+    def giveSuareLatticeCoord(self, row, col):
+        # Gives the xy coordinates for a square lattice structure.
+        # in multiples of inter-helical distance
+        x = self.SQ_inter_helix_dist * col
+        y = self.SQ_inter_helix_dist * row
+        return [x, y]
+
+    def giveHoneycombCoord(self, row, col):
+        # gives x,y coordinates (in multiples of radii) for a honeycomb lattice
+        # at row = row and column = col
+        #
+        # y coordinates are a bit tricky they depend both on the row and column:
+        # odd columns = 0,4,6,10,12,16,18,....
+        # even columns = 1,3,7,9,13,...
+        if col % 2 == 0:  # even column
+            i = 0
+            y = 1  # even column first helix is at y=100*radius
+            while i <= row:
+                if i % 2 == 0:
+                    y = y + self.HC_inter_helix_dist
+                else:
+                    y = y + 2*self.HC_inter_helix_dist
+                i = i + 1
+        else:  # odd column
+            i = 0
+            y = 0  # in odd columns the first helix is at y=0
+            while i <= row:
+                if i % 2 == 0:
+                    y = y + 2*self.HC_inter_helix_dist
+                else:
+                    y = y + self.HC_inter_helix_dist
+                i = i + 1
+        x = col * math.sqrt(3.0/4.0) * self.HC_inter_helix_dist
+        return [x, y]
+
+    def helixPointsAround(self, helix, radius, step, basesPerTurn, complementOffset, bases, square_lattice=False):
+        # returns a list containing the two strand coordinates around
+        # the helix with column number = helix[0] and row number = helix[1]
+        if square_lattice:
+            [xOffs, yOffs] = self.giveSuareLatticeCoord(helix[0], helix[1])
+        else:
+            [xOffs, yOffs] = self.giveHoneycombCoord(helix[0], helix[1])
+        lsOfPoints = []
+        lsOfPointsComplement = []
+        Pi = 3.14159
+        for t in range(bases):
+            x = radius * math.cos(t * (2 * Pi / basesPerTurn)) + xOffs
+            y = radius * math.sin(t * (2 * Pi / basesPerTurn)) + yOffs
+            z = step * t
+            lsOfPoints.append((x, y, z))
+            xC = radius * math.cos((t - complementOffset) * (2 * Pi / basesPerTurn)) + xOffs
+            yC = radius * math.sin((t - complementOffset) * (2 * Pi / basesPerTurn)) + yOffs
+            zC = step * t
+            lsOfPointsComplement.append((xC, yC, zC))
+        return [lsOfPoints, lsOfPointsComplement]
+
+    def helixPointAround(self, rowNum, colNum, baseNum, radius, step, basesPerTurn, complementOffset,
+                         square_lattice=False):
+        # returns the two coordinates of a base and its complement around
+        # the helix with row number rowNum and column colNum
+        Pi = 3.14159
+        if square_lattice:
+            [xOffs, yOffs] = self.giveSuareLatticeCoord(rowNum, colNum)
+            x = radius * math.cos((baseNum + 1) * (2 * Pi / basesPerTurn)) + xOffs
+            y = radius * math.sin((baseNum + 1) * (2 * Pi / basesPerTurn)) + yOffs
+            z = step * baseNum  #
+            xC = radius * math.cos((baseNum + 1 - complementOffset) * (2 * Pi / basesPerTurn)) + xOffs
+            yC = radius * math.sin((baseNum + 1 - complementOffset) * (2 * Pi / basesPerTurn)) + yOffs
+            zC = step * baseNum
+        else:
+            [xOffs, yOffs] = self.giveHoneycombCoord(rowNum, colNum)
+            x = radius * math.cos(baseNum * (2 * Pi / basesPerTurn)) + xOffs
+            y = radius * math.sin(baseNum * (2 * Pi / basesPerTurn)) + yOffs
+            z = step * baseNum
+            xC = radius * math.cos((baseNum - complementOffset) * (2 * Pi / basesPerTurn)) + xOffs
+            yC = radius * math.sin((baseNum - complementOffset) * (2 * Pi / basesPerTurn)) + yOffs
+            zC = step * baseNum
+        return [[x, y, z], [xC, yC, zC]]
+
+
+#----------------------------------------------------------------------------------------------------
+#             THE BLENDER STUFF
+#----------------------------------------------------------------------------------------------------
 class c2bProperties(bpy.types.PropertyGroup):
+    # Here we store all the data that the addon has to keep track of
     caDNAno_filepath: bpy.props.StringProperty(subtype="FILE_PATH")
     caDNAno_latticetype: bpy.props.EnumProperty(
         items=[('sq', 'Square', 'Square lattice design', 0),
@@ -447,6 +671,8 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
         row = self.layout.row()
         row.operator("c2b.file_printer", text="Print caDNAno")
         self.layout.prop(scn.c2b_properties, "caDNAno_latticetype")
+        row = self.layout.row()
+        row.operator("c2b.make_cylinders", text="Create cylinder model")
 
 
 
@@ -457,10 +683,48 @@ class C2B_OT_FilePrinter(bpy.types.Operator):
     def execute(self, context):
         print('Testing caDNAno reading and printing:')
         caDNAno = caDNAnoFileHandler()
-        caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath)
-        caDNAno.print_basic_data()
+        if caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath):
+            caDNAno.print_basic_data()
+        else:
+            self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
+        del caDNAno
         return{'FINISHED'}
 
+
+class C2B_OT_make_cylinders(bpy.types.Operator):
+    bl_idname = "c2b.make_cylinders"
+    bl_label = "Draw cylinder model"
+
+    def execute(self, context):
+        caDNAno = caDNAnoFileHandler()
+        if caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath):
+            pass
+        else:
+            self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
+            return{'FINISHED'}
+        mdna = DnaGeometry()
+        # Get the lengths of the scaffold strands so that
+        # scaffold[j] gives an array like [ row, column, [startbase1, endbase1], [startbase2, endbase2], ... ]
+        scaffold = caDNAno.getScaffoldLengths()
+        for strandData in scaffold:
+            row = strandData[0]
+            col = strandData[1]
+            if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                xy = mdna.giveHoneycombCoord(row, col)
+            else:
+                xy = mdna.giveSuareLatticeCoord(row, col)
+            x = xy[0]
+            y = xy[1]
+            for segment in strandData[2:]:
+                # Create the segment cylinder
+                segment_z_length = (segment[1] - segment[0]) * mdna.base_step
+                segment_z_midpoint = segment[0] * mdna.base_step + segment_z_length/2.0
+                bpy.ops.mesh.primitive_cylinder_add(radius= mdna.dna_diameter/2.0,
+                    depth=segment_z_length, enter_editmode=False, align='WORLD',
+                    location=(x, y, segment_z_midpoint), scale=(1, 1, 1))
+
+        del caDNAno
+        return{'FINISHED'}
 
 
 class C2B_OT_FileSelector(bpy.types.Operator, ImportHelper):
@@ -475,77 +739,7 @@ class C2B_OT_FileSelector(bpy.types.Operator, ImportHelper):
         context.scene.c2b_properties.caDNAno_filepath = fdir
         return{'FINISHED'}
 
-class EXAMPLE_PT_warning_panel(bpy.types.Panel):
-    bl_label = "caDNAno2Blender Warning"
-    bl_category = "caDNAno2Blend"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
 
-    @classmethod
-    def poll(self, context):
-        return not dependencies_installed
-
-    def draw(self, context):
-        layout = self.layout
-
-        lines = [f"Please install the missing dependencies for the \"{bl_info.get('name')}\" add-on.",
-                 f"1. Open the preferences (Edit > Preferences > Add-ons).",
-                 f"2. Search for the \"{bl_info.get('name')}\" add-on.",
-                 f"3. Open the details section of the add-on.",
-                 f"4. Click on the \"{EXAMPLE_OT_install_dependencies.bl_label}\" button.",
-                 f"   This will download and install the missing Python packages, if Blender has the required",
-                 f"   permissions.",
-                 f"If you're attempting to run the add-on from the text editor, you won't see the options described",
-                 f"above. Please install the add-on properly through the preferences.",
-                 f"1. Open the add-on preferences (Edit > Preferences > Add-ons).",
-                 f"2. Press the \"Install\" button.",
-                 f"3. Search for the add-on file.",
-                 f"4. Confirm the selection by pressing the \"Install Add-on\" button in the file browser."]
-
-        for line in lines:
-            layout.label(text=line)
-
-
-class EXAMPLE_OT_install_dependencies(bpy.types.Operator):
-    bl_idname = "example.install_dependencies"
-    bl_label = "Install dependencies"
-    bl_description = ("Downloads and installs the required python packages for this add-on. "
-                      "Internet connection is required. Blender may have to be started with "
-                      "elevated permissions in order to install the package")
-    bl_options = {"REGISTER", "INTERNAL"}
-
-    @classmethod
-    def poll(self, context):
-        # Deactivate when dependencies have been installed
-        return not dependencies_installed
-
-    def execute(self, context):
-        try:
-            install_pip()
-            for dependency in dependencies:
-                install_and_import_module(module_name=dependency.module,
-                                          package_name=dependency.package,
-                                          global_name=dependency.name)
-        except (subprocess.CalledProcessError, ImportError) as err:
-            self.report({"ERROR"}, str(err))
-            return {"CANCELLED"}
-
-        global dependencies_installed
-        dependencies_installed = True
-
-        # Register the panels, operators, etc. since dependencies are installed
-        for cls in __classes__:
-            bpy.utils.register_class(cls)
-
-        return {"FINISHED"}
-
-
-class EXAMPLE_preferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator(EXAMPLE_OT_install_dependencies.bl_idname, icon="CONSOLE")
 
 
 preference_classes = (EXAMPLE_PT_warning_panel,
@@ -553,16 +747,17 @@ preference_classes = (EXAMPLE_PT_warning_panel,
                       EXAMPLE_preferences)
 
 __classes__ = (
-    c2bProperties, C2B_OT_FileSelector, C2B_OT_FilePrinter, C2B_PT_c2bMainPanel
+    c2bProperties, C2B_OT_FileSelector, C2B_OT_FilePrinter, C2B_OT_make_cylinders, C2B_PT_c2bMainPanel
 )
 
 def register():
     global dependencies_installed
     dependencies_installed = False
 
+    # First, load 'preference_classes' to display warning and button in the preferences
+    # if the dependency python modules are missing, like json:
     for cls in preference_classes:
         bpy.utils.register_class(cls)
-
     try:
         for dependency in dependencies:
             import_module(module_name=dependency.module, global_name=dependency.name)
@@ -570,6 +765,7 @@ def register():
     except ModuleNotFoundError:
         # Don't register other panels, operators etc.
         return
+    # Then if everything is ok, load the plugin as usual:
     for c in __classes__:
         bpy.utils.register_class(c)
     bpy.types.Scene.c2b_properties = bpy.props.PointerProperty(type=c2bProperties)
