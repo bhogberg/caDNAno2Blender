@@ -18,18 +18,20 @@ from collections import namedtuple
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper
 
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 #             FIRST MAKE SURE ALL MODULES WE NEED ARE INSTALLED
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 # Importing of dependencies are Copyright (C) 2020  Robert Guetzkow
 # github.com/robertguetzkow/blender-python-examples
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 Dependency = namedtuple("Dependency", ["module", "package", "name"])
 # Declare all modules that this add-on depends on. The package and (global) name can be set to None,
 # if they are equal to the module name. See import_module and ensure_and_import_module for the
 # explanation of the arguments.
 dependencies = (Dependency(module="simplejson", package=None, name=None),)
 dependencies_installed = False
+
+
 def import_module(module_name, global_name=None):
     """
     Import a module.
@@ -45,6 +47,7 @@ def import_module(module_name, global_name=None):
     # Attempt to import the module and assign it to globals dictionary. This allow to access the module under
     # the given name, just like the regular import would.
     globals()[global_name] = importlib.import_module(module_name)
+
 
 def install_pip():
     """
@@ -64,6 +67,7 @@ def install_pip():
 
         ensurepip.bootstrap()
         os.environ.pop("PIP_REQ_TRACKER", None)
+
 
 def install_and_import_module(module_name, package_name=None, global_name=None):
     """
@@ -104,6 +108,7 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
     # The installation succeeded, attempt to import the module again
     import_module(module_name, global_name)
 
+
 class EXAMPLE_PT_warning_panel(bpy.types.Panel):
     bl_label = "caDNAno2Blender Warning"
     bl_category = "caDNAno2Blend"
@@ -136,6 +141,7 @@ class EXAMPLE_PT_warning_panel(bpy.types.Panel):
 
         for line in lines:
             layout.label(text=line)
+
 
 class EXAMPLE_OT_install_dependencies(bpy.types.Operator):
     bl_idname = "example.install_dependencies"
@@ -170,6 +176,7 @@ class EXAMPLE_OT_install_dependencies(bpy.types.Operator):
 
         return {"FINISHED"}
 
+
 class EXAMPLE_preferences(bpy.types.AddonPreferences):
     bl_idname = __name__
 
@@ -177,9 +184,10 @@ class EXAMPLE_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.operator(EXAMPLE_OT_install_dependencies.bl_idname, icon="CONSOLE")
 
-#----------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------
 #             THE caDNAno and DNA SPECIFIC CODE
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 # Using average helix-helix distances of 2.6 nm (in both square and honeycomb lattices)
 # Yoo J, Aksimentiev A. P Natl Acad Sci USA. 2013; 110:20099–20104
 # Fischer S, et al. Nano Lett. 2016; 16(7): 4282-4287
@@ -195,6 +203,7 @@ class caDNAnoFileHandler():
         in the cadnano files for all.
 
     '''
+
     def __init__(self):
         self.jsonDecoder = simplejson.JSONDecoder()
         self.jsonEncoder = simplejson.JSONEncoder()
@@ -226,7 +235,7 @@ class caDNAnoFileHandler():
         try:
             totalBases = len(self.data["vstrands"][0]["skip"])
         except:
-            #Something is wrong with the caDNAno file
+            # Something is wrong with the caDNAno file
             return False
         strands = self.data["vstrands"]
         self.vstrandsSequence = {}
@@ -548,6 +557,51 @@ class caDNAnoFileHandler():
             dataset.append(subDataset)
         return dataset
 
+    def getScaffoldPath(self):
+        #
+        # Returns a list that show the scaffold routing
+        # [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ]
+        # - Used to build scaffold path models
+        #
+        # This version excludes the loop groups for now.
+        #
+        # Note! Only works if entire scaffold path is one continous loop
+        # run scaffoldStitch first to be sure no breakpoints mess things up
+        #
+        # goingRight shows the strand direction = True if the strand is going to the right,
+        # i.e. is a scaffold strand with even number
+
+        strands = self.data["vstrands"]
+        path = []
+        firstHelix = 0
+        firstStrand = strands[firstHelix]
+        firstBase = [-1, -1, -1, -1]
+        scaffold = firstStrand["scaf"]
+        i = -1
+        while firstBase == [-1, -1, -1, -1]:
+            i = i + 1
+            firstBase = scaffold[i]
+        firstBaseNumber = i
+        # now firstBase contains the numbers for the first real scaffold base
+        # Since firstHelix is always 0 that means that goingRight is always = True
+        path.append([int(firstStrand["row"]),
+                     int(firstStrand["col"]), firstBaseNumber,
+                     True])
+        prevBase = firstBase
+        while not (self.strandi[prevBase[2]] == firstHelix and prevBase[3] == firstBaseNumber):
+            newHelix = prevBase[2]
+            newBaseNo = prevBase[3]
+            strandIndex = self.strandi[newHelix]
+            strand = strands[strandIndex]
+            goingRight = False
+            if newHelix % 2 == 0:
+                goingRight = True
+            path.append([int(strand["row"]), int(strand["col"]),
+                         newBaseNo, goingRight])
+            scaffold = strand["scaf"]
+            prevBase = scaffold[newBaseNo]
+        return path
+
 
 class DnaGeometry():
     def __init__(self):
@@ -555,7 +609,7 @@ class DnaGeometry():
         self.SQ_inter_helix_dist = 2.6
         self.HC_inter_helix_dist = 2.6
         self.dna_diameter = 2.1
-        self.base_step = 0.34 #nm in dsDNA
+        self.base_step = 0.34  # nm in dsDNA
 
     def getData(self):
         return self.data
@@ -581,18 +635,18 @@ class DnaGeometry():
                 if i % 2 == 0:
                     y = y + self.HC_inter_helix_dist
                 else:
-                    y = y + 2*self.HC_inter_helix_dist
+                    y = y + 2 * self.HC_inter_helix_dist
                 i = i + 1
         else:  # odd column
             i = 0
             y = 0  # in odd columns the first helix is at y=0
             while i <= row:
                 if i % 2 == 0:
-                    y = y + 2*self.HC_inter_helix_dist
+                    y = y + 2 * self.HC_inter_helix_dist
                 else:
                     y = y + self.HC_inter_helix_dist
                 i = i + 1
-        x = col * math.sqrt(3.0/4.0) * self.HC_inter_helix_dist
+        x = col * math.sqrt(3.0 / 4.0) * self.HC_inter_helix_dist
         return [x, y]
 
     def helixPointsAround(self, helix, radius, step, basesPerTurn, complementOffset, bases, square_lattice=False):
@@ -640,9 +694,9 @@ class DnaGeometry():
         return [[x, y, z], [xC, yC, zC]]
 
 
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 #             THE BLENDER STUFF
-#----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 class c2bProperties(bpy.types.PropertyGroup):
     # Here we store all the data that the addon has to keep track of
     caDNAno_filepath: bpy.props.StringProperty(subtype="FILE_PATH")
@@ -651,7 +705,6 @@ class c2bProperties(bpy.types.PropertyGroup):
                ('hc', 'Honeycomb', 'Honeycomb lattice design', 1)],
         name='Lattice type',
         default='sq')
-
 
 
 class C2B_PT_c2bMainPanel(bpy.types.Panel):
@@ -673,7 +726,8 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
         self.layout.prop(scn.c2b_properties, "caDNAno_latticetype")
         row = self.layout.row()
         row.operator("c2b.make_cylinders", text="Create cylinder model")
-
+        row = self.layout.row()
+        row.operator("c2b.make_scaffold", text="Create scaffold model")
 
 
 class C2B_OT_FilePrinter(bpy.types.Operator):
@@ -688,7 +742,7 @@ class C2B_OT_FilePrinter(bpy.types.Operator):
         else:
             self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
         del caDNAno
-        return{'FINISHED'}
+        return {'FINISHED'}
 
 
 class C2B_OT_make_cylinders(bpy.types.Operator):
@@ -701,7 +755,7 @@ class C2B_OT_make_cylinders(bpy.types.Operator):
             pass
         else:
             self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
-            return{'FINISHED'}
+            return {'FINISHED'}
         mdna = DnaGeometry()
         # Get the lengths of the scaffold strands so that
         # scaffold[j] gives an array like [ row, column, [startbase1, endbase1], [startbase2, endbase2], ... ]
@@ -718,13 +772,100 @@ class C2B_OT_make_cylinders(bpy.types.Operator):
             for segment in strandData[2:]:
                 # Create the segment cylinder
                 segment_z_length = (segment[1] - segment[0]) * mdna.base_step
-                segment_z_midpoint = segment[0] * mdna.base_step + segment_z_length/2.0
-                bpy.ops.mesh.primitive_cylinder_add(radius= mdna.dna_diameter/2.0,
-                    depth=segment_z_length, enter_editmode=False, align='WORLD',
-                    location=(x, y, segment_z_midpoint), scale=(1, 1, 1))
+                segment_z_midpoint = segment[0] * mdna.base_step + segment_z_length / 2.0
+                bpy.ops.mesh.primitive_cylinder_add(radius=mdna.dna_diameter / 2.0,
+                                                    depth=segment_z_length, enter_editmode=False, align='WORLD',
+                                                    location=(x, y, segment_z_midpoint), scale=(1, 1, 1))
 
         del caDNAno
-        return{'FINISHED'}
+        return {'FINISHED'}
+
+
+class C2B_OT_make_scaffold(bpy.types.Operator):
+    bl_idname = "c2b.make_scaffold"
+    bl_label = "Draw scaffold model"
+
+    def execute(self, context):
+        caDNAno = caDNAnoFileHandler()
+        if caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath):
+            pass
+        else:
+            self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
+            return {'FINISHED'}
+        mdna = DnaGeometry()
+        caDNAno.scaffold_stitch()
+        path = caDNAno.getScaffoldPath()
+        baseLength = mdna.base_step
+        curvePoints = []
+        for j in range(len(path)):
+            base = path[j]
+            if j == 0:
+                previous_base = base.copy()
+                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                    xy = mdna.giveHoneycombCoord(base[0], base[1])
+                else:
+                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                x = xy[0]
+                y = xy[1]
+                z = base[2] * baseLength
+                curvePoints.append((x, y, z))
+            if previous_base[0] != base[0] or previous_base[1] != base[1]:
+                # We have had a crossover add both the previous base and the current
+                # to the list
+                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                    xy = mdna.giveHoneycombCoord(previous_base[0], previous_base[1])
+                else:
+                    xy = mdna.giveSuareLatticeCoord(previous_base[0], previous_base[1])
+                x = xy[0]
+                y = xy[1]
+                z = previous_base[2] * baseLength
+                curvePoints.append((x, y, z))
+                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                    xy = mdna.giveHoneycombCoord(base[0], base[1])
+                else:
+                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                x = xy[0]
+                y = xy[1]
+                z = base[2] * baseLength
+                curvePoints.append((x, y, z))
+            if j == len(path) - 1:
+                # Finally, add last base regardless of crossovers
+                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                    xy = mdna.giveHoneycombCoord(base[0], base[1])
+                else:
+                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                x = xy[0]
+                y = xy[1]
+                z = base[2] * baseLength
+                curvePoints.append((x, y, z))
+            previous_base = base.copy()
+        curveEdges = []
+        for i in range(1, len(curvePoints)):
+            curveEdges.append([i - 1, i])
+        curveEdges.append([len(curvePoints) - 1, 0])
+        mesh = bpy.data.meshes.new("scaffoldPathMesh")
+        obj = bpy.data.objects.new(mesh.name, mesh)
+        col = bpy.data.collections.get("Collection")
+        col.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        faces = []
+        mesh.from_pydata(curvePoints, curveEdges, faces)
+        # #Bevel the mesh
+        bevel_mod = obj.modifiers.new('Bevel', 'BEVEL')
+        bevel_mod.affect = 'VERTICES'
+        bevel_mod.offset_type = 'OFFSET'
+        bevel_mod.profile = 0.5
+        bevel_mod.width = 0.7
+        bevel_mod.segments = 10
+        bevel_mod.use_clamp_overlap = False
+        bpy.ops.object.modifier_apply(modifier=bevel_mod.name)
+        obj.select_set(True)
+        bpy.ops.object.convert(target='CURVE')
+        bpy.context.object.data.bevel_depth = 0.22
+        bpy.context.object.data.bevel_resolution = 9
+
+        del caDNAno, mdna
+        return {'FINISHED'}
 
 
 class C2B_OT_FileSelector(bpy.types.Operator, ImportHelper):
@@ -737,9 +878,7 @@ class C2B_OT_FileSelector(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         fdir = self.properties.filepath
         context.scene.c2b_properties.caDNAno_filepath = fdir
-        return{'FINISHED'}
-
-
+        return {'FINISHED'}
 
 
 preference_classes = (EXAMPLE_PT_warning_panel,
@@ -747,8 +886,10 @@ preference_classes = (EXAMPLE_PT_warning_panel,
                       EXAMPLE_preferences)
 
 __classes__ = (
-    c2bProperties, C2B_OT_FileSelector, C2B_OT_FilePrinter, C2B_OT_make_cylinders, C2B_PT_c2bMainPanel
+    c2bProperties, C2B_OT_FileSelector, C2B_OT_FilePrinter, C2B_OT_make_cylinders,
+    C2B_OT_make_scaffold, C2B_PT_c2bMainPanel
 )
+
 
 def register():
     global dependencies_installed
@@ -770,6 +911,7 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.c2b_properties = bpy.props.PointerProperty(type=c2bProperties)
 
+
 def unregister():
     for cls in preference_classes:
         bpy.utils.unregister_class(cls)
@@ -777,6 +919,7 @@ def unregister():
         for c in reversed(__classes__):
             bpy.utils.unregister_class(c)
         del bpy.types.Scene.c2b_properties
+
 
 if __name__ == "__main__":
     register()
