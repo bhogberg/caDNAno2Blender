@@ -728,6 +728,8 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
         row.operator("c2b.make_cylinders", text="Create cylinder model")
         row = self.layout.row()
         row.operator("c2b.make_scaffold", text="Create scaffold model")
+        row = self.layout.row()
+        row.operator("c2b.make_spaghetti", text="Create spaghetti model")
 
 
 class C2B_OT_FilePrinter(bpy.types.Operator):
@@ -868,6 +870,39 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class C2B_OT_make_spaghetti(bpy.types.Operator):
+    bl_idname = "c2b.make_spaghetti"
+    bl_label = "Draw spaghetti model"
+
+    def execute(self, context):
+        # Fourth value is NURBS weight
+        curvePoints = [(0, 0.5,    0, 1),
+                       (0, 0.5,    0, 1),
+                       (0.5, 0,    0, 1),
+                       (1, 0.5,    0, 1),
+                       (0.5, 1,  0.15, 1),
+                       (0.5, 0.5, 0.3, 1),
+                       (0.5, 0.5, 0.3, 1)
+                       ]
+        curve = bpy.data.curves.new("testPath", type='CURVE')
+        curve.dimensions = '3D'
+        spline = curve.splines.new(type='NURBS')
+        # a spline point for each point
+        spline.points.add(len(curvePoints) - 1)  # theres already one point by default
+        # assign the point coordinates to the spline points
+        for p, new_co in zip(spline.points, curvePoints):
+            p.co = new_co  # (add nurbs weight)
+        # make a new object with the curve
+        obj = bpy.data.objects.new('object_name', curve)
+        #bpy.context.scene.objects.link(obj)
+        #obj = bpy.data.objects.new(curve.name, curve)
+        col = bpy.data.collections.get("Collection")
+        col.objects.link(obj)
+        #bpy.context.view_layer.objects.active = obj
+        #curve.from_pydata(curvePoints)
+        return {'FINISHED'}
+
+
 class C2B_OT_FileSelector(bpy.types.Operator, ImportHelper):
     bl_idname = "c2b.file_selector"
     bl_label = "caDNAno file"
@@ -887,7 +922,7 @@ preference_classes = (EXAMPLE_PT_warning_panel,
 
 __classes__ = (
     c2bProperties, C2B_OT_FileSelector, C2B_OT_FilePrinter, C2B_OT_make_cylinders,
-    C2B_OT_make_scaffold, C2B_PT_c2bMainPanel
+    C2B_OT_make_scaffold, C2B_OT_make_spaghetti, C2B_PT_c2bMainPanel
 )
 
 
