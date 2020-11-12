@@ -211,6 +211,8 @@ class caDNAnoFileHandler():
         self.fileName = ""
         self.vstrandsSequence = {}
         self.strandi = {}
+        # Dictionary storing {(helix,base):color} to look up colors for staples
+        self.colors = {}
 
     def get_data(self):
         return self.data
@@ -248,6 +250,14 @@ class caDNAnoFileHandler():
         for strand in strands:
             self.strandi.update({strand["num"]: i})
             i += 1
+
+        # Build color dictionary for all staples
+        i = 0
+        for strand in strands:
+            for color_entry in strand["stap_colors"]:
+                self.colors.update({(i,color_entry[0]):color_entry[1]})
+            i += 1
+
         return True
 
     def write_caDNAno_file(self, new_filename):
@@ -387,7 +397,8 @@ class caDNAnoFileHandler():
 
     def getStaplePaths(self):
         '''
-        Returns a list of lists where each list is a staple showing the staple routing:
+        Returns a list of lists [ color, [staplePath] ] where each staplePath is a
+        list showing the staple routing:
         [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ]
         '''
 
@@ -405,6 +416,7 @@ class caDNAnoFileHandler():
                     startBases.append([base, baseIndex, strandIndex, strandNum])
         stplsPaths = []
         for startBase in startBases:
+            color = self.colors[(startBase[2],startBase[1])]
             prevBase = startBase[0]
             prevBaseIndex = startBase[1]
             prevStrandIndex = startBase[2]
@@ -426,7 +438,7 @@ class caDNAnoFileHandler():
                 prevBaseIndex = newBaseIndex
                 prevStrandNum = newStrandNum
                 prevStrand = newStrand
-            stplsPaths.append(path)
+            stplsPaths.append([color, path])
         return stplsPaths
 
 
@@ -766,8 +778,8 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
         row = self.layout.row()
         row.operator("c2b.file_selector", icon="FILE_FOLDER", text="")
         row.label(text=scn.c2b_properties.caDNAno_filepath)
-        row = self.layout.row()
-        row.operator("c2b.file_printer", text="Print caDNAno")
+        #row = self.layout.row()
+        #row.operator("c2b.file_printer", text="Print caDNAno")
         self.layout.prop(scn.c2b_properties, "caDNAno_latticetype")
         row = self.layout.row()
         row.operator("c2b.make_cylinders", text="Create cylinder model")
@@ -930,6 +942,19 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
     bl_idname = "c2b.make_spaghetti"
     bl_label = "Draw spaghetti model"
 
+    def colorToRGB(self, c):
+        '''
+        Convenience function to convert decimal color to rgb
+        '''
+        print(c)
+        r = c >> 16
+        c -= r * 65536
+        g = int(c / 256)
+        c -= g * 256
+        b = c
+        print((r,g,b))
+        return (r/255.0, g/255.0, b/255.0, 1.0)
+
     def draw_curve_from_pts(self, context, curvePoints, name):
         '''
         Re-usable convenience function to draw NURBS curve from points
@@ -993,7 +1018,9 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
         i = 0
         for stap in staps:
             curve_points = []
-            for base in stap:
+            color = stap[0]
+            path = stap[1]
+            for base in path:
                 coord = mdna.helixPointAround(base[0], base[1], base[2], r, stp, turn, compl, square_lattice=lattice)
                 goingRight = base[3]
                 if goingRight:
@@ -1004,7 +1031,13 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
             curve = self.draw_curve_from_pts(context, curve_points, 'staple_'+str(i))
             curve.data.bevel_object = bpy.data.objects[profile_name]
             curve.data.use_fill_caps = True
+            curve.select_set(True)
+            mat = bpy.data.materials.new(name="stap_"+str(i)+"material")  # set new material to variable
+            curve.data.materials.append(mat)  # add the material to the object
+            mat.diffuse_color = self.colorToRGB(color)  # change color
+
             i += 1
+
 
         '''Testing code:
         # Create curve:
