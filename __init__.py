@@ -385,6 +385,51 @@ class caDNAnoFileHandler():
 
             strand["skip"] = [0 for j in range(len(newstap))]
 
+    def getStaplePaths(self):
+        '''
+        Returns a list of lists where each list is a staple showing the staple routing:
+        [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ]
+        '''
+
+        startBases = []
+        strands = self.data["vstrands"]
+        strandIndex = -1
+        for strand in strands:
+            strandIndex = strandIndex + 1
+            stap = strand["stap"]
+            baseIndex = -1
+            for base in stap:
+                baseIndex = baseIndex + 1
+                if base[0] == -1 and base[1] == -1 and base[2] > -1 and base[3] > -1:
+                    strandNum = strand["num"]
+                    startBases.append([base, baseIndex, strandIndex, strandNum])
+        stplsPaths = []
+        for startBase in startBases:
+            prevBase = startBase[0]
+            prevBaseIndex = startBase[1]
+            prevStrandIndex = startBase[2]
+            prevStrandNum = startBase[3]
+            prevStrand = strands[prevStrandIndex]
+            path = []
+            while prevBase[2] > -1 and prevBase[3] > -1:
+                goingRight = True
+                if prevStrandNum % 2 == 0:
+                    goingRight = False
+                path.append([int(prevStrand["row"]), int(prevStrand["col"]),
+                             prevBaseIndex, goingRight])
+                newStrand = strands[self.strandi[prevBase[2]]]
+                newStap = newStrand["stap"]
+                newBase = newStap[prevBase[3]]
+                newBaseIndex = prevBase[3]
+                newStrandNum = prevBase[2]
+                prevBase = newBase
+                prevBaseIndex = newBaseIndex
+                prevStrandNum = newStrandNum
+                prevStrand = newStrand
+            stplsPaths.append(path)
+        return stplsPaths
+
+
     def scaffold_stitch(self):
         # Finds beakpoints in the scaffold strands and stitches them together
         # breakpoints look like this: on base b-1 [h,b-2,-1,-1] on base b [-1,-1,h,b+1]
@@ -886,8 +931,10 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
     bl_label = "Draw spaghetti model"
 
     def draw_curve_from_pts(self, context, curvePoints, name):
-        # Re-usable convenience function to draw NURBS curve from points
-        # returns the curve object.
+        '''
+        Re-usable convenience function to draw NURBS curve from points
+        returns the curve object.
+        '''
         curve = bpy.data.curves.new(name + "_curve", type='CURVE')
         curve.dimensions = '3D'
         spline = curve.splines.new(type='NURBS')
@@ -911,6 +958,55 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
                                                   align='WORLD', location=(0, 0, 0),
                                                   scale=(1, 1, 1))
         bpy.context.active_object.name = profile_name
+
+        caDNAno = caDNAnoFileHandler()
+        if caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath):
+            pass
+        else:
+            self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
+            return {'FINISHED'}
+        mdna = DnaGeometry()
+        caDNAno.scaffold_stitch()
+        scaff = caDNAno.getScaffoldPath()
+        staps = caDNAno.getStaplePaths()
+        r = 0.8 #Using reduced helical radius to make room for thickness of curves
+        stp = mdna.base_step
+        turn = 10.5 #Bases per full turn
+        compl = 6 #no of bases offset in complement compared to forward strand
+        if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+            lattice = False
+        else:
+            lattice = True
+        curve_points = []
+        for base in scaff:
+            coord = mdna.helixPointAround(base[0], base[1], base[2], r, stp, turn, compl, square_lattice=lattice)
+            goingRight = base[3]
+            if goingRight:
+                xyz = coord[0]  # Take the leading strand coordinates ...
+            else:
+                xyz = coord[1]  # ... or the lagging ones, depending on direction
+            curve_points.append( (xyz[0],xyz[1],xyz[2], 1.0) ) #Last number is NURBS weight
+        curve = self.draw_curve_from_pts(context, curve_points, 'scaffold')
+        curve.data.bevel_object = bpy.data.objects[profile_name]
+        curve.data.use_fill_caps = True
+
+        i = 0
+        for stap in staps:
+            curve_points = []
+            for base in stap:
+                coord = mdna.helixPointAround(base[0], base[1], base[2], r, stp, turn, compl, square_lattice=lattice)
+                goingRight = base[3]
+                if goingRight:
+                    xyz = coord[0]  # Take the leading strand coordinates ...
+                else:
+                    xyz = coord[1]  # ... or the lagging ones, depending on direction
+                curve_points.append((xyz[0], xyz[1], xyz[2], 1.0))  # Last number is NURBS weight
+            curve = self.draw_curve_from_pts(context, curve_points, 'staple_'+str(i))
+            curve.data.bevel_object = bpy.data.objects[profile_name]
+            curve.data.use_fill_caps = True
+            i += 1
+
+        '''Testing code:
         # Create curve:
         # Fourth value is NURBS weight
         curvePoints = [(0, 0.5,    0, 1),
@@ -923,6 +1019,7 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
         # Create curve geometry:
         curve.data.bevel_object = bpy.data.objects[profile_name]
         curve.data.use_fill_caps = True
+        '''
 
         return {'FINISHED'}
 
