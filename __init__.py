@@ -795,13 +795,17 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
             self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
             return {'FINISHED'}
         mdna = DnaGeometry()
+        # In case the scaffold has a breakpoint:
         caDNAno.scaffold_stitch()
         path = caDNAno.getScaffoldPath()
+        # Gather things and start building curve coordinates:
         baseLength = mdna.base_step
         curvePoints = []
         for j in range(len(path)):
             base = path[j]
             if j == 0:
+                # First point needs to be handled separately
+                # since there is no 'previous_base'
                 previous_base = base.copy()
                 if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
                     xy = mdna.giveHoneycombCoord(base[0], base[1])
@@ -812,7 +816,10 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
                 z = base[2] * baseLength
                 curvePoints.append((x, y, z))
             if previous_base[0] != base[0] or previous_base[1] != base[1]:
-                # We have had a crossover add both the previous base and the current
+                # After the first base, only add coordinates when the strand is
+                # jumping, i.e. around crossovers.
+                #
+                # Here, we have had a crossover add both the previous base and the current
                 # to the list
                 if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
                     xy = mdna.giveHoneycombCoord(previous_base[0], previous_base[1])
@@ -841,18 +848,21 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
                 z = base[2] * baseLength
                 curvePoints.append((x, y, z))
             previous_base = base.copy()
+        # Now connect all the vertices with edges:
         curveEdges = []
         for i in range(1, len(curvePoints)):
             curveEdges.append([i - 1, i])
+        # the last one should connect back to the first vertex:
         curveEdges.append([len(curvePoints) - 1, 0])
+        # Add the object to the scene:
         mesh = bpy.data.meshes.new("scaffoldPathMesh")
         obj = bpy.data.objects.new(mesh.name, mesh)
-        col = bpy.data.collections.get("Collection")
-        col.objects.link(obj)
+        bpy.context.scene.collection.objects.link(obj)
         bpy.context.view_layer.objects.active = obj
+        # Add the mesh to the object
         faces = []
         mesh.from_pydata(curvePoints, curveEdges, faces)
-        # #Bevel the mesh
+        # Bevel the mesh, i.e. rounding the sharp corners
         bevel_mod = obj.modifiers.new('Bevel', 'BEVEL')
         bevel_mod.affect = 'VERTICES'
         bevel_mod.offset_type = 'OFFSET'
@@ -861,6 +871,7 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
         bevel_mod.segments = 10
         bevel_mod.use_clamp_overlap = False
         bpy.ops.object.modifier_apply(modifier=bevel_mod.name)
+        # Convert the mesh to a curve and add pipe geometry (bevel)
         obj.select_set(True)
         bpy.ops.object.convert(target='CURVE')
         bpy.context.object.data.bevel_depth = 0.22
@@ -874,17 +885,10 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
     bl_idname = "c2b.make_spaghetti"
     bl_label = "Draw spaghetti model"
 
-    def execute(self, context):
-        # Fourth value is NURBS weight
-        curvePoints = [(0, 0.5,    0, 1),
-                       (0, 0.5,    0, 1),
-                       (0.5, 0,    0, 1),
-                       (1, 0.5,    0, 1),
-                       (0.5, 1,  0.15, 1),
-                       (0.5, 0.5, 0.3, 1),
-                       (0.5, 0.5, 0.3, 1)
-                       ]
-        curve = bpy.data.curves.new("testPath", type='CURVE')
+    def draw_curve_from_pts(self, context, curvePoints, name):
+        # Re-usable convenience function to draw NURBS curve from points
+        # returns the curve object.
+        curve = bpy.data.curves.new(name + "_curve", type='CURVE')
         curve.dimensions = '3D'
         spline = curve.splines.new(type='NURBS')
         # a spline point for each point
@@ -893,13 +897,33 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
         for p, new_co in zip(spline.points, curvePoints):
             p.co = new_co  # (add nurbs weight)
         # make a new object with the curve
-        obj = bpy.data.objects.new('object_name', curve)
-        #bpy.context.scene.objects.link(obj)
-        #obj = bpy.data.objects.new(curve.name, curve)
-        col = bpy.data.collections.get("Collection")
-        col.objects.link(obj)
-        #bpy.context.view_layer.objects.active = obj
-        #curve.from_pydata(curvePoints)
+        obj = bpy.data.objects.new(name, curve)
+        bpy.context.scene.collection.objects.link(obj)
+        # Make the curve extend to the endpoints
+        obj.data.splines[0].use_endpoint_u = True
+        return obj
+
+    def execute(self, context):
+        profile_radius = 0.22
+        profile_name = 'profile_circle'
+        # Create bezier circle to be used as profile
+        bpy.ops.curve.primitive_bezier_circle_add(radius=profile_radius, enter_editmode=False,
+                                                  align='WORLD', location=(0, 0, 0),
+                                                  scale=(1, 1, 1))
+        bpy.context.active_object.name = profile_name
+        # Create curve:
+        # Fourth value is NURBS weight
+        curvePoints = [(0, 0.5,    0, 1),
+                       (0.5, 0,    0, 1),
+                       (1, 0.5,    0, 1),
+                       (0.5, 1,  0.15, 1),
+                       (0.5, 0.5, 0.3, 1)
+                       ]
+        curve = self.draw_curve_from_pts(context, curvePoints, 'test')
+        # Create curve geometry:
+        curve.data.bevel_object = bpy.data.objects[profile_name]
+        curve.data.use_fill_caps = True
+
         return {'FINISHED'}
 
 
