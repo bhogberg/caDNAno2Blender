@@ -630,20 +630,34 @@ class caDNAnoFileHandler():
 
         strands = self.data["vstrands"]
         path = []
-        firstHelix = 0
-        firstStrand = strands[firstHelix]
+        j = 0
+        firstStrand = strands[j]
         firstBase = [-1, -1, -1, -1]
         scaffold = firstStrand["scaf"]
         i = -1
         while firstBase == [-1, -1, -1, -1]:
+            print(i,j,strands[j]["num"])
+            if i == len(scaffold)-1:
+                # Entire scaffold row was empty jump to next one:
+                i = -1
+                j += 1
+                scaffold = strands[j]["scaf"]
             i = i + 1
             firstBase = scaffold[i]
+
         firstBaseNumber = i
-        # now firstBase contains the numbers for the first real scaffold base
-        # Since firstHelix is always 0 that means that goingRight is always = True
+        firstHelix = j
+        # now firstBase contains the number for the first real scaffold base
+        # and firstHelix the number containing the first real scaffold strand
+        firstStrand = strands[firstHelix]
+        # Check the directionality of the scaffold to determine if GoingRight should be True
+        if strands[j]["num"] % 2 == 0:
+            GoingRight = True
+        else:
+            GoingRight = False
         path.append([int(firstStrand["row"]),
                      int(firstStrand["col"]), firstBaseNumber,
-                     True])
+                     GoingRight])
         prevBase = firstBase
         while not (self.strandi[prevBase[2]] == firstHelix and prevBase[3] == firstBaseNumber):
             newHelix = prevBase[2]
