@@ -9,6 +9,7 @@ bl_info = {
 }
 
 import bpy
+from pathlib import Path
 import os
 import math
 import time
@@ -58,10 +59,17 @@ def install_pip():
     is set and if it is, attempts to use it as temp directory. This would result in an error because the
     directory can't be found. Therefore, PIP_REQ_TRACKER needs to be removed from environment variables.
     :return:
+
+    binary_path_python depreceated after Blender 2.91
     """
     try:
+        python_path = Path(bpy.app.binary_path_python)
+    except AttributeError:
+        import sys
+        python_path = Path(sys.executable)
+    try:
         # Check if pip is already installed
-        subprocess.run([bpy.app.binary_path_python, "-m", "pip", "--version"], check=True)
+        subprocess.run([python_path, "-m", "pip", "--version"], check=True)
     except subprocess.CalledProcessError:
         import ensurepip
 
@@ -92,14 +100,22 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
     # site-packages. Hence, the environment variable PYTHONNOUSERSITE is set to disallow pip from checking the user
     # site-packages. If the package is not already installed for Blender's Python interpreter, it will then try to.
     # The paths used by pip can be checked with `subprocess.run([bpy.app.binary_path_python, "-m", "site"], check=True)`
-
+    #
+    # binary_path_python depreceated after Blender 2.91 so need to modify
+    #
     # Store the original environment variables
     environ_orig = dict(os.environ)
     os.environ["PYTHONNOUSERSITE"] = "1"
 
     try:
+        python_path = Path(bpy.app.binary_path_python)
+    except AttributeError:
+        import sys
+        python_path = Path(sys.executable)
+
+    try:
         # Try to install the package. This may fail with subprocess.CalledProcessError
-        subprocess.run([bpy.app.binary_path_python, "-m", "pip", "install", package_name], check=True)
+        subprocess.run([python_path, "-m", "pip", "install", package_name], check=True)
     finally:
         # Always restore the original environment variables
         os.environ.clear()
