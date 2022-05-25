@@ -1,7 +1,8 @@
 # caDNAno2Blender
+A module for drawing DNA nanostructures based on caDNAno-files in blender
+
 
 # Installation
-A module for handling caDNAno files in blender
 
 1. Create a folder 'caDNAno2Blender' where Blender looks for addons and put the file '__init__.py' in that folder
 
