@@ -630,64 +630,68 @@ class caDNAnoFileHandler():
             dataset.append(subDataset)
         return dataset
 
-    def getScaffoldPath(self):
+    def getScaffoldPaths(self):
         #
-        # Returns a list that show the scaffold routing
-        # [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ]
+        # Returns a list of lists that show the scaffold routing
+        # [
+        # [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ],  (scaff section 0)
+        # [ [row, col, base, goingRight], [row, col, base, goingRight], ...   ],  (scaff section 1)
+        # ...,
+        # ]
         # - Used to build scaffold path models
         #
         # This version excludes the loop groups for now.
         #
-        # Note! Only works if entire scaffold path is one continous loop
-        # run scaffoldStitch first to be sure no breakpoints mess things up
-        #
         # goingRight shows the strand direction = True if the strand is going to the right,
         # i.e. is a scaffold strand with even number
 
+        # First find all 5' ends, they look like [-1,-1, from_vStrand, from_Base]
         strands = self.data["vstrands"]
-        path = []
-        j = 0
-        firstStrand = strands[j]
-        firstBase = [-1, -1, -1, -1]
-        scaffold = firstStrand["scaf"]
-        i = -1
-        while firstBase == [-1, -1, -1, -1]:
-            print(i,j,strands[j]["num"])
-            if i == len(scaffold)-1:
-                # Entire scaffold row was empty jump to next one:
-                i = -1
-                j += 1
-                scaffold = strands[j]["scaf"]
-            i = i + 1
-            firstBase = scaffold[i]
+        # Loop through all vstrands
+        start_bases = []
+        for curr_vstrand_i in range(len(strands)):
+            curr_vstrand = strands[curr_vstrand_i].copy()
+            scaffold = curr_vstrand["scaf"].copy()
+            for base_i in range(len(scaffold)):
+                base = scaffold[base_i].copy()
+                if base[0] == -1 and base[1] == -1 and base[2] != -1 and base[3] != -1:
+                    # Found starting base!
+                    start_bases.append([curr_vstrand_i, base_i, base])
+            curr_vstrand_i +=1
+        # Now all scaffold 5' ends are in a list like:
+        # [  [strand_i0, base_0, [-1, -1, toStrand_no, toBase_i] ], [strand_i1, base_1, [-1, -1, toStrand_no, toBase_i] ], ...]
+        # Now build the list of scaffold strand paths
+        paths = []
+        for start_base in start_bases:
+            path = []
+            curr_vstrand_i = start_base[0] #start_bases has vstrand indecies not numbers
+            curr_base_i = start_base[1]
+            curr_base = start_base[2].copy()
+            if strands[curr_vstrand_i]["num"] % 2 == 0:
+                GoingRight = True
+            else:
+                GoingRight = False
+            path.append([int(strands[curr_vstrand_i]["row"]),
+                         int(strands[curr_vstrand_i]["col"]), curr_base_i,
+                         GoingRight])
+            while curr_base[2] != -1 and curr_base[3] != -1: #Stop when encountering another 5'-end or empty base
+                # Step to next stop in path:
+                next_vstrand_i = self.strandi[curr_base[2]] # The bases have strand numbers, so must convert
+                next_base_i = curr_base[3]
+                curr_base = strands[next_vstrand_i]["scaf"][next_base_i].copy()
+                curr_vstrand_i = next_vstrand_i
+                curr_base_i = next_base_i
+                # Check the directionality of the scaffold to determine if GoingRight should be True
+                if strands[curr_vstrand_i]["num"] % 2 == 0:
+                    GoingRight = True
+                else:
+                    GoingRight = False
+                path.append([int(strands[curr_vstrand_i]["row"]),
+                             int(strands[curr_vstrand_i]["col"]), curr_base_i,
+                             GoingRight])
+            paths.append(path)
 
-        firstBaseNumber = i
-        firstHelix = j
-        # now firstBase contains the number for the first real scaffold base
-        # and firstHelix the number containing the first real scaffold strand
-        firstStrand = strands[firstHelix]
-        # Check the directionality of the scaffold to determine if GoingRight should be True
-        if strands[j]["num"] % 2 == 0:
-            GoingRight = True
-        else:
-            GoingRight = False
-        path.append([int(firstStrand["row"]),
-                     int(firstStrand["col"]), firstBaseNumber,
-                     GoingRight])
-        prevBase = firstBase
-        while not (self.strandi[prevBase[2]] == firstHelix and prevBase[3] == firstBaseNumber):
-            newHelix = prevBase[2]
-            newBaseNo = prevBase[3]
-            strandIndex = self.strandi[newHelix]
-            strand = strands[strandIndex]
-            goingRight = False
-            if newHelix % 2 == 0:
-                goingRight = True
-            path.append([int(strand["row"]), int(strand["col"]),
-                         newBaseNo, goingRight])
-            scaffold = strand["scaf"]
-            prevBase = scaffold[newBaseNo]
-        return path
+        return paths
 
 
 class DnaGeometry():
@@ -882,87 +886,93 @@ class C2B_OT_make_scaffold(bpy.types.Operator):
             self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
             return {'FINISHED'}
         mdna = DnaGeometry()
-        # In case the scaffold has a breakpoint:
-        caDNAno.scaffold_stitch()
-        path = caDNAno.getScaffoldPath()
+        paths = caDNAno.getScaffoldPaths()
+        print(len(paths))
+        if len(paths)!=0:
+            pass
+        else:
+            self.report({"WARNING"}, "No scaffold 5'-ends found, scaffold models only work on scaffold pieces with breakpoints")
+            return {'FINISHED'}
+
         # Gather things and start building curve coordinates:
         baseLength = mdna.base_step
-        curvePoints = []
-        for j in range(len(path)):
-            base = path[j]
-            if j == 0:
-                # First point needs to be handled separately
-                # since there is no 'previous_base'
+
+        for path in paths:
+            curvePoints = []
+            for j in range(len(path)):
+                base = path[j]
+                if j == 0:
+                    # First point needs to be handled separately
+                    # since there is no 'previous_base'
+                    previous_base = base.copy()
+                    if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                        xy = mdna.giveHoneycombCoord(base[0], base[1])
+                    else:
+                        xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                    x = xy[0]
+                    y = xy[1]
+                    z = base[2] * baseLength
+                    curvePoints.append((x, y, z))
+                if previous_base[0] != base[0] or previous_base[1] != base[1]:
+                    # After the first base, only add coordinates when the strand is
+                    # jumping, i.e. around crossovers.
+                    #
+                    # Here, we have had a crossover add both the previous base and the current
+                    # to the list
+                    if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                        xy = mdna.giveHoneycombCoord(previous_base[0], previous_base[1])
+                    else:
+                        xy = mdna.giveSuareLatticeCoord(previous_base[0], previous_base[1])
+                    x = xy[0]
+                    y = xy[1]
+                    z = previous_base[2] * baseLength
+                    curvePoints.append((x, y, z))
+                    if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                        xy = mdna.giveHoneycombCoord(base[0], base[1])
+                    else:
+                        xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                    x = xy[0]
+                    y = xy[1]
+                    z = base[2] * baseLength
+                    curvePoints.append((x, y, z))
+                if j == len(path) - 1:
+                    # Finally, add last base regardless of crossovers
+                    if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
+                        xy = mdna.giveHoneycombCoord(base[0], base[1])
+                    else:
+                        xy = mdna.giveSuareLatticeCoord(base[0], base[1])
+                    x = xy[0]
+                    y = xy[1]
+                    z = base[2] * baseLength
+                    curvePoints.append((x, y, z))
                 previous_base = base.copy()
-                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
-                    xy = mdna.giveHoneycombCoord(base[0], base[1])
-                else:
-                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
-                x = xy[0]
-                y = xy[1]
-                z = base[2] * baseLength
-                curvePoints.append((x, y, z))
-            if previous_base[0] != base[0] or previous_base[1] != base[1]:
-                # After the first base, only add coordinates when the strand is
-                # jumping, i.e. around crossovers.
-                #
-                # Here, we have had a crossover add both the previous base and the current
-                # to the list
-                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
-                    xy = mdna.giveHoneycombCoord(previous_base[0], previous_base[1])
-                else:
-                    xy = mdna.giveSuareLatticeCoord(previous_base[0], previous_base[1])
-                x = xy[0]
-                y = xy[1]
-                z = previous_base[2] * baseLength
-                curvePoints.append((x, y, z))
-                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
-                    xy = mdna.giveHoneycombCoord(base[0], base[1])
-                else:
-                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
-                x = xy[0]
-                y = xy[1]
-                z = base[2] * baseLength
-                curvePoints.append((x, y, z))
-            if j == len(path) - 1:
-                # Finally, add last base regardless of crossovers
-                if context.scene.c2b_properties.caDNAno_latticetype == 'hc':
-                    xy = mdna.giveHoneycombCoord(base[0], base[1])
-                else:
-                    xy = mdna.giveSuareLatticeCoord(base[0], base[1])
-                x = xy[0]
-                y = xy[1]
-                z = base[2] * baseLength
-                curvePoints.append((x, y, z))
-            previous_base = base.copy()
-        # Now connect all the vertices with edges:
-        curveEdges = []
-        for i in range(1, len(curvePoints)):
-            curveEdges.append([i - 1, i])
-        # the last one should connect back to the first vertex:
-        curveEdges.append([len(curvePoints) - 1, 0])
-        # Add the object to the scene:
-        mesh = bpy.data.meshes.new("scaffoldPathMesh")
-        obj = bpy.data.objects.new(mesh.name, mesh)
-        bpy.context.scene.collection.objects.link(obj)
-        bpy.context.view_layer.objects.active = obj
-        # Add the mesh to the object
-        faces = []
-        mesh.from_pydata(curvePoints, curveEdges, faces)
-        # Bevel the mesh, i.e. rounding the sharp corners
-        bevel_mod = obj.modifiers.new('Bevel', 'BEVEL')
-        bevel_mod.affect = 'VERTICES'
-        bevel_mod.offset_type = 'OFFSET'
-        bevel_mod.profile = 0.5
-        bevel_mod.width = 0.7
-        bevel_mod.segments = 10
-        bevel_mod.use_clamp_overlap = False
-        bpy.ops.object.modifier_apply(modifier=bevel_mod.name)
-        # Convert the mesh to a curve and add pipe geometry (bevel)
-        obj.select_set(True)
-        bpy.ops.object.convert(target='CURVE')
-        bpy.context.object.data.bevel_depth = 0.22
-        bpy.context.object.data.bevel_resolution = 9
+            # Now connect all the vertices with edges:
+            curveEdges = []
+            for i in range(1, len(curvePoints)):
+                curveEdges.append([i - 1, i])
+            # Add the object to the scene:
+            mesh = bpy.data.meshes.new("scaffoldPathMesh")
+            obj = bpy.data.objects.new(mesh.name, mesh)
+            bpy.context.scene.collection.objects.link(obj)
+            bpy.context.view_layer.objects.active = obj
+            # Add the mesh to the object
+            faces = []
+            mesh.from_pydata(curvePoints, curveEdges, faces)
+            # Bevel the mesh, i.e. rounding the sharp corners
+            bevel_mod = obj.modifiers.new('Bevel', 'BEVEL')
+            bevel_mod.affect = 'VERTICES'
+            bevel_mod.offset_type = 'OFFSET'
+            bevel_mod.profile = 0.5
+            bevel_mod.width = 0.7
+            bevel_mod.segments = 10
+            bevel_mod.use_clamp_overlap = False
+            bpy.ops.object.modifier_apply(modifier=bevel_mod.name)
+            # Convert the mesh to a curve and add pipe geometry (bevel)
+            obj.select_set(True)
+            bpy.ops.object.convert(target='CURVE')
+            bpy.context.object.data.bevel_depth = 0.22
+            bpy.context.object.data.bevel_resolution = 9
+            bpy.context.object.data.use_fill_caps = True
 
         del caDNAno, mdna
         return {'FINISHED'}
@@ -976,13 +986,13 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
         '''
         Convenience function to convert decimal color to rgb
         '''
-        print(c)
+        #print(c)
         r = c >> 16
         c -= r * 65536
         g = int(c / 256)
         c -= g * 256
         b = c
-        print((r,g,b))
+        #print((r,g,b))
         return (r/255.0, g/255.0, b/255.0, 1.0)
 
     def draw_curve_from_pts(self, context, curvePoints, name):
@@ -1006,13 +1016,13 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
         return obj
 
     def execute(self, context):
-        profile_radius = 0.22
-        profile_name = 'profile_circle'
-        # Create bezier circle to be used as profile
-        bpy.ops.curve.primitive_bezier_circle_add(radius=profile_radius, enter_editmode=False,
-                                                  align='WORLD', location=(0, 0, 0),
-                                                  scale=(1, 1, 1))
-        bpy.context.active_object.name = profile_name
+        # profile_radius = 0.22
+        # profile_name = 'profile_circle'
+        # # Create bezier circle to be used as profile
+        # bpy.ops.curve.primitive_bezier_circle_add(radius=profile_radius, enter_editmode=False,
+        #                                           align='WORLD', location=(0, 0, 0),
+        #                                           scale=(1, 1, 1))
+        # bpy.context.active_object.name = profile_name
 
         caDNAno = caDNAnoFileHandler()
         if caDNAno.read_caDNAno_file(context.scene.c2b_properties.caDNAno_filepath):
@@ -1021,8 +1031,7 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
             self.report({"WARNING"}, "caDNAno file does not exist or is not a caDNAno json")
             return {'FINISHED'}
         mdna = DnaGeometry()
-        caDNAno.scaffold_stitch()
-        scaff = caDNAno.getScaffoldPath()
+        scaffs = caDNAno.getScaffoldPaths()
         staps = caDNAno.getStaplePaths()
         r = 0.8 #Using reduced helical radius to make room for thickness of curves
         stp = mdna.base_step
@@ -1032,18 +1041,26 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
             lattice = False
         else:
             lattice = True
-        curve_points = []
-        for base in scaff:
-            coord = mdna.helixPointAround(base[0], base[1], base[2], r, stp, turn, compl, square_lattice=lattice)
-            goingRight = base[3]
-            if goingRight:
-                xyz = coord[0]  # Take the leading strand coordinates ...
-            else:
-                xyz = coord[1]  # ... or the lagging ones, depending on direction
-            curve_points.append( (xyz[0],xyz[1],xyz[2], 1.0) ) #Last number is NURBS weight
-        curve = self.draw_curve_from_pts(context, curve_points, 'scaffold')
-        curve.data.bevel_object = bpy.data.objects[profile_name]
-        curve.data.use_fill_caps = True
+
+        i = 0
+        print(scaffs)
+        for scaff in scaffs:
+            curve_points = []
+            for base in scaff:
+                coord = mdna.helixPointAround(base[0], base[1], base[2], r, stp, turn, compl, square_lattice=lattice)
+                goingRight = base[3]
+                if goingRight:
+                    xyz = coord[0]  # Take the leading strand coordinates ...
+                else:
+                    xyz = coord[1]  # ... or the lagging ones, depending on direction
+                curve_points.append( (xyz[0],xyz[1],xyz[2], 1.0) ) #Last number is NURBS weight
+            curve = self.draw_curve_from_pts(context, curve_points, 'scaffold_'+str(i))
+            i += 1
+            #curve.data.bevel_object = bpy.data.objects[profile_name]
+            #curve.data.use_fill_caps = True
+            curve.data.bevel_depth = 0.22
+            curve.data.bevel_resolution = 9
+            curve.data.use_fill_caps = True
 
         i = 0
         for stap in staps:
@@ -1059,12 +1076,20 @@ class C2B_OT_make_spaghetti(bpy.types.Operator):
                     xyz = coord[1]  # ... or the lagging ones, depending on direction
                 curve_points.append((xyz[0], xyz[1], xyz[2], 1.0))  # Last number is NURBS weight
             curve = self.draw_curve_from_pts(context, curve_points, 'staple_'+str(i))
-            curve.data.bevel_object = bpy.data.objects[profile_name]
+            curve.data.bevel_depth = 0.22
+            curve.data.bevel_resolution = 7
             curve.data.use_fill_caps = True
             curve.select_set(True)
             mat = bpy.data.materials.new(name="stap_"+str(i)+"material")  # set new material to variable
             curve.data.materials.append(mat)  # add the material to the object
             mat.diffuse_color = self.colorToRGB(color)  # change color
+
+            # curve.data.bevel_object = bpy.data.objects[profile_name]
+            # curve.data.use_fill_caps = True
+            # curve.select_set(True)
+            # mat = bpy.data.materials.new(name="stap_"+str(i)+"material")  # set new material to variable
+            # curve.data.materials.append(mat)  # add the material to the object
+            # mat.diffuse_color = self.colorToRGB(color)  # change color
 
             i += 1
 
