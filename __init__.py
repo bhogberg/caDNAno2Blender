@@ -721,7 +721,7 @@ class DnaGeometry():
         # even columns = 1,3,7,9,13,...
         if col % 2 == 0:  # even column
             i = 0
-            y = 1  # even column first helix is at y=100*radius
+            y = 0.5 * self.HC_inter_helix_dist   #even column first helix is at y = radius
             while i <= row:
                 if i % 2 == 0:
                     y = y + self.HC_inter_helix_dist
