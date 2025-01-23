@@ -808,7 +808,7 @@ class C2B_PT_c2bMainPanel(bpy.types.Panel):
     def draw(self, context):
         scn = context.scene
         row = self.layout.row()
-        row.label(text='caDNAno to Blender', icon='LIGHTPROBE_GRID')
+        row.label(text='caDNAno to Blender')
         row = self.layout.row()
         row.operator("c2b.file_selector", icon="FILE_FOLDER", text="")
         row.label(text=scn.c2b_properties.caDNAno_filepath)
